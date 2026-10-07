@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.2
 
 - The extension serves nothing on a pipe connection until the client has sent the
   instance token. Before, any process of the same user could call every debugger
