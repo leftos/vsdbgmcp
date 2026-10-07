@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO.Pipes;
 using System.Linq;
-using System.Security.AccessControl;
-using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -18,6 +16,10 @@ namespace VsDbgMcp.Host
     /// A pipe rather than a socket: nothing binds a network interface, and Windows
     /// enforces who may connect. Several clients can be attached at once, so two
     /// agents can watch the same Visual Studio.
+    ///
+    /// A client must send the instance token (PipeToken) before anything else. Only
+    /// then is JSON-RPC started on its connection, so no call or event reaches a
+    /// client that has not proved it read the discovery record.
     /// </summary>
     sealed class PipeServer : IDisposable
     {
@@ -28,16 +30,19 @@ namespace VsDbgMcp.Host
         readonly Action<string> _log;
 
         readonly List<Connection> _connections = new List<Connection>();
+
+        /// <summary>Connected but not yet admitted: still to send the token.</summary>
+        readonly HashSet<NamedPipeServerStream> _pending = new HashSet<NamedPipeServerStream>();
         readonly object _gate = new object();
         CancellationTokenSource _cts;
         Task _listener;
+        bool _disposed;
 
         sealed class Connection : IDisposable
         {
             public JsonRpc Rpc;
             public NamedPipeServerStream Stream;
             public IShimEvents Events;
-            public bool Authenticated;
 
             public void Dispose()
             {
@@ -57,7 +62,7 @@ namespace VsDbgMcp.Host
 
         public int ConnectionCount
         {
-            get { lock (_gate) return _connections.Count(c => c.Authenticated); }
+            get { lock (_gate) return _connections.Count; }
         }
 
         public void Start()
@@ -68,48 +73,115 @@ namespace VsDbgMcp.Host
 
         async Task ListenAsync(CancellationToken ct)
         {
+            NamedPipeServerStream listening = null;
+            var firstInstance = true;
             while (!ct.IsCancellationRequested)
             {
-                NamedPipeServerStream stream = null;
                 try
                 {
-                    stream = CreatePipe();
-                    await stream.WaitForConnectionAsync(ct).ConfigureAwait(false);
-                    Accept(stream);
-                    stream = null; // owned by the connection now
+                    if (listening == null)
+                    {
+                        listening = SecurePipe.Create(_pipeName, firstInstance);
+                        firstInstance = false;
+                    }
+                    await listening.WaitForConnectionAsync(ct).ConfigureAwait(false);
+
+                    // The next instance exists before this one is handed off, so the
+                    // name is never left without an instance of ours that another
+                    // process could take over.
+                    var connected = listening;
+                    listening = null;
+                    lock (_gate) _pending.Add(connected);
+                    try
+                    {
+                        listening = SecurePipe.Create(_pipeName, false);
+                    }
+                    finally
+                    {
+                        // Not awaited: a client that is slow to send its token must
+                        // not hold up the next one.
+                        _ = AdmitAsync(connected);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
-                    stream?.Dispose();
+                    listening?.Dispose();
                     return;
                 }
                 catch (Exception ex)
                 {
-                    stream?.Dispose();
+                    listening?.Dispose();
+                    listening = null;
+
+                    // With no instance of ours left, claim the name afresh so nothing
+                    // else can have taken it in the meantime.
+                    lock (_gate) firstInstance = _pending.Count == 0 && _connections.Count == 0;
                     _log("listener: " + ex.Message);
                     await Task.Delay(500, ct).ContinueWith(_ => { }, TaskScheduler.Default).ConfigureAwait(false);
                 }
             }
+            listening?.Dispose();
         }
 
-        NamedPipeServerStream CreatePipe()
+        async Task AdmitAsync(NamedPipeServerStream stream)
         {
-            var security = new PipeSecurity();
-            var self = WindowsIdentity.GetCurrent().User;
-            security.AddAccessRule(new PipeAccessRule(self, PipeAccessRights.FullControl, AccessControlType.Allow));
+            var client = SecurePipe.DescribeClient(stream);
+            TokenCheck check;
+            try
+            {
+                check = await PipeToken.ReceiveAsync(stream, _token, PipeToken.Timeout).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                lock (_gate)
+                {
+                    // Dispose has already closed it; nothing was refused.
+                    if (!_pending.Remove(stream)) return;
+                }
+                _log("refused " + client + ": " + ex.Message);
+                stream.Dispose();
+                return;
+            }
 
-            return new NamedPipeServerStream(
-                _pipeName,
-                PipeDirection.InOut,
-                NamedPipeServerStream.MaxAllowedServerInstances,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous,
-                inBufferSize: 64 * 1024,
-                outBufferSize: 64 * 1024,
-                pipeSecurity: security);
+            lock (_gate)
+            {
+                // Dispose has already closed it.
+                if (!_pending.Remove(stream)) return;
+            }
+
+            if (check != TokenCheck.Accepted)
+            {
+                stream.Dispose();
+                if (check == TokenCheck.Closed) return;
+
+                _log("refused " + client + ": " + Describe(check));
+                Activity.Record("client refused", client + ": " + Describe(check), 0, true);
+                return;
+            }
+
+            try
+            {
+                Accept(stream, client);
+            }
+            catch (Exception ex)
+            {
+                _log("could not serve " + client + ": " + ex.Message);
+                stream.Dispose();
+            }
         }
 
-        void Accept(NamedPipeServerStream stream)
+        static string Describe(TokenCheck check)
+        {
+            switch (check)
+            {
+                case TokenCheck.WrongToken: return "wrong token";
+                case TokenCheck.Malformed: return "did not send a token; an MCP client running an older vsdbgmcp must be restarted to update it";
+                case TokenCheck.TimedOut: return "sent no token within " + (int)PipeToken.Timeout.TotalSeconds + " seconds";
+                default: return check.ToString();
+            }
+        }
+
+        void Accept(NamedPipeServerStream stream, string client)
         {
             var connection = new Connection { Stream = stream };
 
@@ -128,12 +200,21 @@ namespace VsDbgMcp.Host
             connection.Events = rpc.Attach<IShimEvents>();
 
             rpc.Disconnected += (_, __) => Remove(connection);
-            rpc.StartListening();
 
-            lock (_gate) _connections.Add(connection);
+            lock (_gate)
+            {
+                if (_disposed)
+                {
+                    connection.Dispose();
+                    return;
+                }
+                _connections.Add(connection);
+            }
+
+            rpc.StartListening();
             Activity.Clients = ConnectionCount;
-            Activity.Record("client connected", null, 0, false);
-            _log("client connected");
+            Activity.Record("client connected", client, 0, false);
+            _log("client connected: " + client);
         }
 
         void Remove(Connection connection)
@@ -170,37 +251,22 @@ namespace VsDbgMcp.Host
             }
         }
 
-        /// <summary>Called by the debug host when a shim says hello.</summary>
-        public string Handshake(int shimContract, string token)
-        {
-            if (!string.Equals(token, _token, StringComparison.Ordinal))
-                throw new InvalidOperationException("Token does not match this instance.");
-
-            if (shimContract != Names.ContractVersion)
-            {
-                _log("contract mismatch: shim " + shimContract + ", host " + Names.ContractVersion);
-            }
-
-            lock (_gate)
-            {
-                foreach (var c in _connections) c.Authenticated = true;
-            }
-
-            Activity.Clients = ConnectionCount;
-            return Names.ContractVersion.ToString();
-        }
-
         public void Dispose()
         {
             try { _cts?.Cancel(); } catch { }
 
             List<Connection> targets;
+            List<NamedPipeServerStream> pending;
             lock (_gate)
             {
+                _disposed = true;
                 targets = _connections.ToList();
                 _connections.Clear();
+                pending = _pending.ToList();
+                _pending.Clear();
             }
             foreach (var c in targets) c.Dispose();
+            foreach (var stream in pending) stream.Dispose();
 
             try { _listener?.Wait(1000); } catch { }
             _cts?.Dispose();

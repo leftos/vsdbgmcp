@@ -26,7 +26,7 @@ namespace VsDbgMcp.Tests
         static InstanceRecord Sample(int pid) => new InstanceRecord
         {
             Pid = pid,
-            Pipe = Names.PipeName(pid),
+            Pipe = "vsdbgmcp-" + pid + "-0123456789abcdef",
             Token = "abc123",
             VsVersion = "17.14.0",
             Contract = Names.ContractVersion,
@@ -34,6 +34,7 @@ namespace VsDbgMcp.Tests
             Capabilities = new[] { Capabilities.Native, Capabilities.DataBreakpoints },
             DebugMode = DebugModes.Break,
             StartedAt = "2026-08-18T10:12:03Z",
+            Elevated = true,
             Workspace = new WorkspaceInfo
             {
                 Kind = WorkspaceKind.Slnx,
@@ -61,7 +62,8 @@ namespace VsDbgMcp.Tests
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
             Assert.Equal(4242, parsed.Pid);
-            Assert.Equal("vsdbgmcp-4242", parsed.Pipe);
+            Assert.Equal("vsdbgmcp-4242-0123456789abcdef", parsed.Pipe);
+            Assert.True(parsed.Elevated);
             Assert.Equal("abc123", parsed.Token);
             Assert.Equal(WorkspaceKind.Slnx, parsed.Workspace.Kind);
             Assert.Equal(@"D:\repo\Engine", parsed.Workspace.Root);
@@ -69,6 +71,29 @@ namespace VsDbgMcp.Tests
             Assert.Equal("4242", parsed.Id);
             Assert.Equal("App#4242", parsed.LegacyId);
             Assert.Contains(Capabilities.DataBreakpoints, parsed.Capabilities);
+        }
+
+        [Fact]
+        public void A_record_without_the_elevated_field_reads_as_not_elevated()
+        {
+            var json = InstanceFile.Serialize(Sample(4242)).Replace(",\n  \"elevated\": true", "");
+            Assert.DoesNotContain("elevated", json);
+
+            var parsed = JsonSerializer.Deserialize<InstanceRecord>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            Assert.False(parsed.Elevated);
+        }
+
+        [Fact]
+        public void Pipe_names_cannot_be_guessed_from_the_process_id()
+        {
+            var first = Names.NewPipeName(4242);
+            var second = Names.NewPipeName(4242);
+
+            Assert.StartsWith("vsdbgmcp-4242-", first);
+            Assert.Equal("vsdbgmcp-4242-".Length + 32, first.Length);
+            Assert.NotEqual(first, second);
         }
 
         [Fact]

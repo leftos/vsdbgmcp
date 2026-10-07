@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- The extension serves nothing on a pipe connection until the client has sent the
+  instance token. Before, any process of the same user could call every debugger
+  method without it, and one handshake marked every open connection as checked
+  (issue #11).
+- A Visual Studio running as administrator admits only clients that also run as
+  administrator. Before, the user's normal processes could drive it. An MCP client
+  running as administrator now connects only to a Visual Studio that also runs as
+  administrator. A refused agent is told which side is elevated.
+- Pipe names include a random part, and the panel names each client process.
+- Host contract 11: the shim sends the token before JSON-RPC starts. The new shim
+  still connects to older extensions at the same elevation; older shims cannot
+  connect to this one and must be restarted to update.
+
 ## 0.10.1
 
 - Operation, capture, and host-session IDs are 6 characters instead of 12. IDs

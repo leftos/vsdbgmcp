@@ -9,6 +9,19 @@ using VsDbgMcp.Contracts;
 
 namespace VsDbgMcp.Shim.Session
 {
+    /// <summary>Why a connection failed, and what the caller can do about it.</summary>
+    public sealed class ConnectFailure
+    {
+        public ConnectFailure(string reason, string nextStep)
+        {
+            Reason = reason;
+            NextStep = nextStep;
+        }
+
+        public string Reason { get; }
+        public string NextStep { get; }
+    }
+
     /// <summary>
     /// One connection to one running Visual Studio. Calls go out over the pipe;
     /// debugger events come back in and land on the shared event bus.
@@ -43,7 +56,10 @@ namespace VsDbgMcp.Shim.Session
         public IProfileHost Profiles { get; private set; }
         public IProjectSystem Project { get; private set; }
         public string HostVersion { get; private set; }
-        public string LastError { get; private set; }
+        /// <summary>Why the last attempt to connect failed; null once connected.</summary>
+        public ConnectFailure LastFailure { get; private set; }
+
+        const string RetryLater = "The instance may still be loading. Retry, or restart Visual Studio if it persists.";
 
         public bool IsConnected => _rpc != null && !_rpc.IsDisposed && _pipe != null && _pipe.IsConnected;
 
@@ -62,10 +78,16 @@ namespace VsDbgMcp.Shim.Session
 
             try
             {
+                // CurrentUserOnly refuses a pipe whose owner is not this process's own
+                // default owner. Identification stops the server from acting as us.
                 _pipe = new NamedPipeClientStream(".", Record.Pipe, PipeDirection.InOut,
-                    PipeOptions.Asynchronous, System.Security.Principal.TokenImpersonationLevel.None);
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly,
+                    System.Security.Principal.TokenImpersonationLevel.Identification);
 
                 await _pipe.ConnectAsync(3000, ct).ConfigureAwait(false);
+
+                if (Record.Contract >= PipeToken.FirstContract)
+                    await PipeToken.SendAsync(_pipe, Record.Token, PipeToken.Timeout, ct).ConfigureAwait(false);
 
                 // The formatter is stated explicitly rather than left to the default,
                 // because the two ends of this pipe are built against different
@@ -93,15 +115,45 @@ namespace VsDbgMcp.Shim.Session
 
                 HostVersion = await Debug.HandshakeAsync(Names.ContractVersion, Record.Token).ConfigureAwait(false);
                 _connected = true;
-                LastError = null;
+                LastFailure = null;
                 return true;
             }
-            catch (Exception ex)
+            catch (UnauthorizedAccessException)
             {
-                LastError = ex.Message;
+                // Windows refused the pipe (integrity label), or its owner is not this
+                // process's default owner (CurrentUserOnly). Records older than
+                // contract 11 do not say whether Visual Studio is elevated.
+                bool? elevated = Record.Contract >= PipeToken.FirstContract ? Record.Elevated : (bool?)null;
+                LastFailure = AccessDenied(elevated, Environment.IsPrivilegedProcess);
                 Teardown();
                 return false;
             }
+            catch (Exception ex)
+            {
+                LastFailure = new ConnectFailure(ex.Message, RetryLater);
+                Teardown();
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Explains a pipe Windows would not open. visualStudioElevated is null when
+        /// the discovery record is too old to say.
+        /// </summary>
+        public static ConnectFailure AccessDenied(bool? visualStudioElevated, bool clientElevated)
+        {
+            const string SameElevation = "Run both as administrator or both without. Retrying as they are fails the same way.";
+            if (visualStudioElevated == true && !clientElevated)
+                return new ConnectFailure("Visual Studio runs as administrator, and this MCP client does not.", SameElevation);
+            if (visualStudioElevated == false && clientElevated)
+                return new ConnectFailure("This MCP client runs as administrator, and Visual Studio does not.", SameElevation);
+            if (visualStudioElevated == null)
+                return new ConnectFailure(
+                    "Windows refused access to this Visual Studio's pipe. Visual Studio and this MCP client most likely run at different elevation.",
+                    SameElevation);
+            return new ConnectFailure(
+                "Windows refused access to this Visual Studio's pipe, although both run at the same elevation. This MCP client may run sandboxed or with a restricted token.",
+                "Run the MCP client as an ordinary process of the user running Visual Studio. Retrying as it is fails the same way.");
         }
 
         void Teardown()

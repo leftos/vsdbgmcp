@@ -201,7 +201,7 @@ namespace VsDbgMcp.Tests
             Directory.CreateDirectory(_dir);
 
             var pipe = "vsdbgmcp-sitting-" + Guid.NewGuid().ToString("N");
-            _host = new FakeHost(pipe) { InstanceId = Process.GetCurrentProcess().Id.ToString() };
+            _host = new FakeHost(pipe, "t") { InstanceId = Process.GetCurrentProcess().Id.ToString() };
             _host.Start();
 
             File.WriteAllText(

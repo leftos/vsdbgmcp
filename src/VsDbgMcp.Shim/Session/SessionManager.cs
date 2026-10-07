@@ -164,10 +164,11 @@ namespace VsDbgMcp.Shim.Session
             lock (_links) link = _links[route.Instance.Pid];
             if (!link.IsConnected && !await link.ConnectAsync(ct).ConfigureAwait(false))
             {
+                // Read once: another call can connect the same link in the meantime.
+                var failure = link.LastFailure;
                 throw new RoutingException(
                     "Found " + link.Id + " but could not connect to it" +
-                    (string.IsNullOrEmpty(link.LastError) ? "." : ": " + link.LastError) +
-                    "\nThe instance may still be loading. Retry, or restart Visual Studio if it persists.");
+                    (failure == null ? ". Retry." : ": " + failure.Reason + "\n" + failure.NextStep));
             }
 
             return link;

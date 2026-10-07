@@ -20,6 +20,12 @@ namespace VsDbgMcp
         public string StartedAt { get; set; }
 
         /// <summary>
+        /// Visual Studio runs as administrator. Its pipe then admits only clients that
+        /// run as administrator too.
+        /// </summary>
+        public bool Elevated { get; set; }
+
+        /// <summary>
         /// Compact instance handle: the Visual Studio process ID, stable for its lifetime.
         /// </summary>
         public string Id => Pid.ToString(System.Globalization.CultureInfo.InvariantCulture);

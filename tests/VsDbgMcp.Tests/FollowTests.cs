@@ -26,7 +26,7 @@ namespace VsDbgMcp.Tests
             Directory.CreateDirectory(_dir);
 
             var pipe = "vsdbgmcp-follow-" + Guid.NewGuid().ToString("N");
-            _host = new FakeHost(pipe) { InstanceId = "App#" + Process.GetCurrentProcess().Id };
+            _host = new FakeHost(pipe, "t") { InstanceId = "App#" + Process.GetCurrentProcess().Id };
             _host.Start();
 
             File.WriteAllText(

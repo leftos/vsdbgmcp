@@ -18,15 +18,17 @@ namespace VsDbgMcp.Tests
     sealed class FakeHost : IDebugHost, IProjectSystem, IOperationHost, IProfileHost, IDisposable
     {
         readonly string _pipeName;
+        readonly string _token;
         readonly CancellationTokenSource _cts = new CancellationTokenSource();
         readonly List<IShimEvents> _clients = new List<IShimEvents>();
         readonly List<JsonRpc> _rpcs = new List<JsonRpc>();
         readonly object _gate = new object();
         Task _listener;
 
-        public FakeHost(string pipeName)
+        public FakeHost(string pipeName, string token)
         {
             _pipeName = pipeName;
+            _token = token;
         }
 
         public string InstanceId { get; set; } = "Fake#1";
@@ -39,6 +41,13 @@ namespace VsDbgMcp.Tests
         /// <summary>A window that answers the pipe but refuses the handshake: a token
         /// mismatch, or Visual Studio still loading.</summary>
         public bool FailHandshake { get; set; }
+
+        /// <summary>False to act as a host older than contract 11, which reads no token
+        /// before JSON-RPC.</summary>
+        public bool ExpectsToken { get; set; } = true;
+
+        /// <summary>How the token sent before JSON-RPC was received, newest last.</summary>
+        public List<TokenCheck> TokenChecks { get; } = new List<TokenCheck>();
 
         public void Start()
         {
@@ -61,6 +70,17 @@ namespace VsDbgMcp.Tests
                 {
                     stream.Dispose();
                     return;
+                }
+
+                if (ExpectsToken)
+                {
+                    var check = await PipeToken.ReceiveAsync(stream, _token, PipeToken.Timeout).ConfigureAwait(false);
+                    lock (_gate) TokenChecks.Add(check);
+                    if (check != TokenCheck.Accepted)
+                    {
+                        stream.Dispose();
+                        continue;
+                    }
                 }
 
                 var formatter = new JsonMessageFormatter();

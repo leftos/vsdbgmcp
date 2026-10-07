@@ -11,6 +11,10 @@ namespace VsDbgMcp.Contracts
     /// </summary>
     public interface IDebugHost
     {
+        /// <summary>
+        /// Exchanges contract versions. From contract 11 the host checks the token
+        /// before JSON-RPC starts (PipeToken); older hosts check it here.
+        /// </summary>
         Task<string> HandshakeAsync(int shimContractVersion, string token);
 
         /// <summary>

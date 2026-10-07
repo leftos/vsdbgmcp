@@ -79,7 +79,8 @@ namespace VsDbgMcp
             Arr(sb, "projectDirs", r.ProjectDirs); sb.Append(",\n");
             Arr(sb, "capabilities", r.Capabilities); sb.Append(",\n");
             Str(sb, "debugMode", r.DebugMode); sb.Append(",\n");
-            Str(sb, "startedAt", r.StartedAt); sb.Append("\n");
+            Str(sb, "startedAt", r.StartedAt); sb.Append(",\n");
+            Bool(sb, "elevated", r.Elevated); sb.Append("\n");
             sb.Append("}\n");
             return sb.ToString();
         }
@@ -89,6 +90,9 @@ namespace VsDbgMcp
 
         static void Num(StringBuilder sb, string name, int value) =>
             sb.Append("  \"").Append(name).Append("\": ").Append(value.ToString(CultureInfo.InvariantCulture));
+
+        static void Bool(StringBuilder sb, string name, bool value) =>
+            sb.Append("  \"").Append(name).Append("\": ").Append(value ? "true" : "false");
 
         static void Arr(StringBuilder sb, string name, IReadOnlyList<string> values)
         {

@@ -116,6 +116,10 @@ Each running instance publishes `%LOCALAPPDATA%\vsdbgmcp\inst-<pid>.json` with i
 name, a token, and the workspace it has open. There is no daemon; the directory is the
 registry, and dead entries are pruned when anyone looks.
 
+A client must send that token before the extension serves anything on its connection.
+Visual Studio and the MCP client must run at the same elevation: both as administrator
+or both without. Details are in [docs/design.md](docs/design.md#11-security).
+
 Full reasoning is in [docs/design.md](docs/design.md).
 
 ## The panel
@@ -157,8 +161,8 @@ line, which process. The reply is selectable.
 - The list holds the last 200 calls, newest first, with how long each took; failures are
   marked in red. Rows left unfolded stay unfolded as new calls arrive.
 
-There is also a `vsdbgmcp` pane in the Output window carrying the pipe name, client
-connections, and anything that went wrong inside the extension.
+There is also a `vsdbgmcp` pane in the Output window carrying the pipe name, each client
+process that connected or was refused, and anything that went wrong inside the extension.
 
 ## Tools
 

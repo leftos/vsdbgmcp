@@ -658,9 +658,36 @@ collapse everything the reader had opened every time an agent made another call.
 
 ## 11. Security
 
-The transport is a local named pipe, not a socket. The discovery file carries a
-per-instance token and is ACL'd to the current user. Every call is
-token-checked.
+The transport is a local named pipe, not a socket, and the pipe rejects remote
+clients.
+
+- **Name.** `vsdbgmcp-<pid>-<32 random hex digits>`, published only in the
+  discovery record. The first pipe instance is created with
+  `FILE_FLAG_FIRST_PIPE_INSTANCE`, so nothing else can already be listening under
+  the name.
+- **Access.** The pipe is open only to the current user. It carries a mandatory
+  label at Visual Studio's own integrity level, so Windows refuses reading and
+  writing to processes below that level. A Visual Studio running as administrator
+  admits only clients that also run as administrator; the user's normal processes
+  cannot reach it. The discovery record says `elevated: true`, so the shim can tell
+  the agent why it was refused.
+- **Token.** Each instance makes a random token and writes it to the discovery
+  record, in a directory open only to the current user. A client sends the token
+  as the first bytes on its connection: one length byte, then the token. The host
+  compares it in constant time and answers with one byte. Only after a match does
+  the host start JSON-RPC on that connection, so no call and no event reaches a
+  client that has not sent it. A client that sends nothing within 5 seconds is
+  dropped. Contract 11 introduced this. Against older hosts the shim still sends
+  the token in the handshake call, which those hosts did not enforce.
+- **Server identity.** The shim connects with `CurrentUserOnly`, which refuses a
+  pipe not owned by the client's own default owner, and with `Identification`
+  impersonation, so the server cannot act as the client. An elevated process's
+  default owner is the Administrators group, so a shim running as administrator
+  connects only to a Visual Studio that also runs as administrator. It never trusts
+  a pipe that a normal process could have created. Both ends must run at the same
+  elevation; when they do not, the shim says which side runs as administrator.
+- **Visibility.** The panel and the `vsdbgmcp` Output pane name each client
+  process that connects or is refused.
 
 This server can execute code inside a debuggee. That is the entire point, and
 it is also why nothing here binds a network interface at any point.
@@ -692,7 +719,7 @@ Risky unknowns first, so the architecture is proven before the surface widens.
 | `wait` returns on a pushed stop with the reason, and never polls | covered by tests |
 | A stop that happened between two `wait` calls is still delivered | covered by tests |
 | Resuming discards stops already reported | covered by tests |
-| The token from the discovery record is checked at handshake | covered by tests |
+| Nothing is served before the token from the discovery record is checked | covered by tests |
 | A dead instance's record is pruned; a corrupt one is ignored | covered by tests |
 | VS restarts; the next call reconnects silently | needs a running Visual Studio |
 | A call issued during break mode does not throw an RPC rejection | needs a running Visual Studio |

@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace VsDbgMcp
 {
@@ -25,8 +27,9 @@ namespace VsDbgMcp
         ///    reading what it collected.
         /// 9: compact capture IDs; older shims require GUID-shaped capture IDs.
         /// 10: operations completing and the solution changing are pushed to the shim.
+        /// 11: the shim sends the instance token before JSON-RPC starts (PipeToken).
         /// </summary>
-        public const int ContractVersion = 10;
+        public const int ContractVersion = 11;
 
         public const string InstanceFilePrefix = "inst-";
         public const string InstanceFileSuffix = ".json";
@@ -49,7 +52,21 @@ namespace VsDbgMcp
 
         public static string ShimExe => Path.Combine(ShimDir, Product + ".exe");
 
-        public static string PipeName(int pid) => Product + "-" + pid;
+        /// <summary>
+        /// A new pipe name for one Visual Studio process. The random part stops another
+        /// process from guessing the name or creating the pipe first; shims read the
+        /// name from the discovery record.
+        /// </summary>
+        public static string NewPipeName(int pid)
+        {
+            var bytes = new byte[16];
+            using (var random = RandomNumberGenerator.Create()) random.GetBytes(bytes);
+
+            var sb = new StringBuilder(Product.Length + 48);
+            sb.Append(Product).Append('-').Append(pid).Append('-');
+            foreach (var b in bytes) sb.Append(b.ToString("x2"));
+            return sb.ToString();
+        }
     }
 
     /// <summary>What an instance can do. Sent at handshake so the shim can hide tools it cannot serve.</summary>

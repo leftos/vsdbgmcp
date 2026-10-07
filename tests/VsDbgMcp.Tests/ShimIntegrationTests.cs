@@ -31,7 +31,7 @@ namespace VsDbgMcp.Tests
             Directory.CreateDirectory(_dir);
 
             _pipe = "vsdbgmcp-test-" + Guid.NewGuid().ToString("N");
-            _host = new FakeHost(_pipe) { InstanceId = "App#" + Process.GetCurrentProcess().Id };
+            _host = new FakeHost(_pipe, "secret-token") { InstanceId = "App#" + Process.GetCurrentProcess().Id };
             _host.Start();
 
             InstanceFileWrite(new InstanceRecord

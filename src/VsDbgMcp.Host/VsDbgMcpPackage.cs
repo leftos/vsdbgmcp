@@ -51,6 +51,8 @@ namespace VsDbgMcp.Host
         uint _solutionCookie;
         uint _debuggerCookie;
         string _token;
+        string _pipeName;
+        bool _elevated;
         int _pid;
         bool _panelShown;
 
@@ -61,6 +63,8 @@ namespace VsDbgMcp.Host
 
             _pid = System.Diagnostics.Process.GetCurrentProcess().Id;
             _token = Guid.NewGuid().ToString("N");
+            _pipeName = Names.NewPipeName(_pid);
+            _elevated = SecurePipe.IsElevated();
 
             _dte = await GetServiceAsync(typeof(SDTE)) as DTE2;
             _solution = await GetServiceAsync(typeof(SVsSolution)) as IVsSolution;
@@ -80,8 +84,7 @@ namespace VsDbgMcp.Host
             _debugHost = new DebugHost(this, _dte, _solution, _debugger, _eventSink, JoinableTaskFactory, Log);
             _projectSystem = new ProjectSystem(this, _dte, _solution, JoinableTaskFactory, Log, await GetServiceAsync(typeof(SVsSolutionBuildManager)) as IVsSolutionBuildManager2);
 
-            _server = new PipeServer(Names.PipeName(_pid), _token, _debugHost, _projectSystem, Log);
-            _debugHost.AttachServer(_server);
+            _server = new PipeServer(_pipeName, _token, _debugHost, _projectSystem, Log);
             _eventSink.StopOccurred += OnStopOccurred;
             _eventSink.OutputOccurred += OnOutputOccurred;
             _eventSink.ModuleLoaded += OnModuleLoaded;
@@ -96,12 +99,14 @@ namespace VsDbgMcp.Host
             }
             _solution?.AdviseSolutionEvents(this, out _solutionCookie);
 
-            Activity.PipeName = Names.PipeName(_pid);
+            Activity.PipeName = _pipeName;
             Activity.Changed += OnActivityChanged;
             await RegisterShowWindowCommandAsync();
 
             PublishRecord();
-            Log("listening on pipe " + Names.PipeName(_pid));
+            Log("listening on pipe " + _pipeName);
+            if (_elevated)
+                Log("Visual Studio runs as administrator: only MCP clients that also run as administrator can connect");
         }
 
         async Task RegisterShowWindowCommandAsync()
@@ -216,7 +221,7 @@ namespace VsDbgMcp.Host
                     var record = new InstanceRecord
                     {
                         Pid = _pid,
-                        Pipe = Names.PipeName(_pid),
+                        Pipe = _pipeName,
                         Token = _token,
                         VsVersion = WorkspaceProbe.ReadVsVersion(_shell),
                         Contract = Names.ContractVersion,
@@ -233,7 +238,8 @@ namespace VsDbgMcp.Host
                             VsDbgMcp.Capabilities.WindowCapture
                         },
                         DebugMode = _debugHost?.CurrentMode ?? DebugModes.Design,
-                        StartedAt = DateTime.UtcNow.ToString("o")
+                        StartedAt = DateTime.UtcNow.ToString("o"),
+                        Elevated = _elevated
                     };
 
                     InstanceFile.Write(record);

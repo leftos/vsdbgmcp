@@ -130,9 +130,11 @@ Installing this lets a local process drive your debugger: set breakpoints, start
 stop the program, read memory and registers, evaluate expressions — including ones with
 side effects, when the caller explicitly asks for them — take memory out of the
 debuggee's heap, and sample its CPU use. Each Visual Studio listens on its own named
-pipe, guarded by a token written to a file only your account can read, and nothing is
-reachable from the network. The panel shows every call as it happens and can stop them
-all.
+pipe, and nothing is reachable from the network. A client must first send a token
+written to a file only your account can read. Visual Studio and the MCP client must
+run at the same elevation, so a normal process cannot drive a Visual Studio running as
+administrator. The panel shows every client that connects and every call as it
+happens, and can stop them all.
 
 ## Tools
 

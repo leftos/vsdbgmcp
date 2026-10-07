@@ -31,7 +31,7 @@ namespace VsDbgMcp.Tests
             Directory.CreateDirectory(_dir);
 
             var pipe = "vsdbgmcp-mp-" + Guid.NewGuid().ToString("N");
-            _host = new FakeHost(pipe);
+            _host = new FakeHost(pipe, "t");
             _host.Start();
 
             File.WriteAllText(

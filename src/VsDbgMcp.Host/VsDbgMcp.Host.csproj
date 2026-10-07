@@ -105,6 +105,7 @@
     <Compile Include="MessageFilter.cs" />
     <Compile Include="NativeReader.cs" />
     <Compile Include="PipeServer.cs" />
+    <Compile Include="SecurePipe.cs" />
     <Compile Include="ProcessIdentity.cs" />
     <Compile Include="ProjectSystem.cs" />
     <Compile Include="Profiler.cs" />
@@ -131,6 +132,7 @@
     <Compile Include="..\VsDbgMcp.Core\ModuleIdentity.cs" Link="Core\ModuleIdentity.cs" />
     <Compile Include="..\VsDbgMcp.Core\ModuleQualifier.cs" Link="Core\ModuleQualifier.cs" />
     <Compile Include="..\VsDbgMcp.Core\PathUtil.cs" Link="Core\PathUtil.cs" />
+    <Compile Include="..\VsDbgMcp.Core\PipeToken.cs" Link="Core\PipeToken.cs" />
     <Compile Include="..\VsDbgMcp.Core\Router.cs" Link="Core\Router.cs" />
     <Compile Include="..\VsDbgMcp.Core\ScratchAddress.cs" Link="Core\ScratchAddress.cs" />
     <Compile Include="..\VsDbgMcp.Core\SourceFreshness.cs" Link="Core\SourceFreshness.cs" />

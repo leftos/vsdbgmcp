@@ -35,7 +35,6 @@ namespace VsDbgMcp.Host
         ProcessIdentity _profiled;
         readonly object _modeGate = new object();
 
-        PipeServer _server;
         string[] _watches = new string[0];
         int _selectedThreadId;
         int _selectedFrame;
@@ -100,8 +99,6 @@ namespace VsDbgMcp.Host
                 return _reportedMode;
             }
         }
-
-        public void AttachServer(PipeServer server) => _server = server;
 
         List<ModuleInfo> ProfileModules(int pid)
         {
@@ -273,10 +270,16 @@ namespace VsDbgMcp.Host
 
         // ---------------------------------------------------------------- handshake
 
+        /// <summary>
+        /// Exchanges contract versions. The token was already checked before this
+        /// connection was served (PipeServer), so the one passed here is not used.
+        /// </summary>
         public Task<string> HandshakeAsync(int shimContractVersion, string token)
         {
-            var version = _server?.Handshake(shimContractVersion, token) ?? Names.ContractVersion.ToString();
-            return Task.FromResult(version);
+            if (shimContractVersion != Names.ContractVersion)
+                _log("contract mismatch: shim " + shimContractVersion + ", host " + Names.ContractVersion);
+
+            return Task.FromResult(Names.ContractVersion.ToString());
         }
 
         /// <summary>
