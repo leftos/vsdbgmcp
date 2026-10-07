@@ -37,12 +37,19 @@ def main():
                 replies.put(json.loads(line))
             except ValueError:
                 pass
+    def keep_stderr(process):
+        # Kept beside the results: a tool that fails says why only on stderr.
+        with open(Path(args.output).with_name('shim-stderr.log'), 'a', encoding='utf-8') as log:
+            for line in process.stderr:
+                log.write(line)
+                log.flush()
+
     def connect():
         nonlocal child
         child = subprocess.Popen([args.shim, '--cwd', str(fixture)], stdin=subprocess.PIPE,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
         threading.Thread(target=receive, args=(child,), daemon=True).start()
-        threading.Thread(target=child.stderr.read, daemon=True).start()
+        threading.Thread(target=keep_stderr, args=(child,), daemon=True).start()
         request('initialize', dict(protocolVersion='2025-06-18', capabilities={}, clientInfo=dict(name='vsdbgmcp-live-tests', version='1')))
         child.stdin.write(json.dumps(dict(jsonrpc='2.0', method='notifications/initialized')) + '\n')
         child.stdin.flush()
@@ -76,7 +83,7 @@ def main():
         return '\n'.join(c.get('text', '') for c in response.get('content', []) if c.get('type') == 'text')
 
     def operation_id(response):
-        found = re.search(r'(?:\bBuild |\[|\bOperation: )([a-z0-9]{12})(?:\]|[:, ])', text(response))
+        found = re.search(r'(?:\bBuild |\[|\bOperation: )([a-z0-9]{6})(?:\]|[:, ])', text(response))
         assert found, response
         return found.group(1)
 
@@ -205,13 +212,13 @@ def main():
             assert 'Collecting capture' in text(call('profile_start', retainRaw=True))
             profile = field(data(call('debug_state')), 'activeProfile')
             capture_id = field(profile, 'captureId')
-            assert re.fullmatch(r'[a-z0-9]{12}', capture_id), capture_id
+            assert re.fullmatch(r'[a-z0-9]{6}', capture_id), capture_id
             assert not any(k.lower() == 'collectorsessionid' for k in profile), profile
         call('detach')
         assert field(data(call('debug_state')), 'mode') == 'design'
         if args.profiles:
             stopped = text(call('profile_stop'))
-            pending = re.search(r'operation_status ([a-z0-9]{12})', stopped)
+            pending = re.search(r'operation_status ([a-z0-9]{6})', stopped)
             if pending:
                 assert field(complete(pending.group(1)), 'state') == 'succeeded'
             else:
@@ -232,7 +239,7 @@ def main():
                     if child.poll() is not None:
                         connect()
                     recovery = text(call('profile_recover_stop', captureId=capture_id))
-                    pending = re.search(r'operation_status ([a-z0-9]{12})', recovery)
+                    pending = re.search(r'operation_status ([a-z0-9]{6})', recovery)
                     if pending:
                         complete(pending.group(1))
             finally:
